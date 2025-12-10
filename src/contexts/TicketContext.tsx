@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import ticketService, { TicketFilters, CreateTicketData } from '@/services/ticketService';
+import { useAuth } from './AuthContext';
 
 export type TicketStatus = 'new' | 'under_review' | 'resolved' | 'closed';
 export type TicketPriority = 'low' | 'medium' | 'high' | 'critical';
@@ -36,184 +38,135 @@ export interface Ticket {
   statusHistory: StatusChange[];
 }
 
+interface TicketStats {
+  total: number;
+  new: number;
+  underReview: number;
+  resolved: number;
+  closed: number;
+}
+
 interface TicketContextType {
   tickets: Ticket[];
+  stats: TicketStats;
   isLoading: boolean;
-  createTicket: (ticket: Omit<Ticket, 'id' | 'createdAt' | 'updatedAt' | 'statusHistory'>) => Promise<Ticket>;
-  updateTicketStatus: (ticketId: string, status: TicketStatus, note?: string, changedBy?: string) => Promise<void>;
-  getTicketById: (id: string) => Ticket | undefined;
+  totalTickets: number;
+  currentPage: number;
+  totalPages: number;
+  fetchTickets: (filters?: TicketFilters) => Promise<void>;
+  createTicket: (data: CreateTicketData) => Promise<Ticket>;
+  updateTicketStatus: (ticketId: string, status: TicketStatus, note?: string) => Promise<void>;
+  getTicketById: (id: string) => Promise<Ticket | null>;
+  refreshStats: () => Promise<void>;
 }
 
 const TicketContext = createContext<TicketContextType | undefined>(undefined);
 
-// Mock tickets
-const initialTickets: Ticket[] = [
-  {
-    id: '1',
-    title: 'Unable to access email server',
-    description: 'Getting timeout errors when trying to connect to the mail server. This started happening after the maintenance window last night.',
-    status: 'new',
-    priority: 'high',
-    category: 'technical',
-    createdBy: '2',
-    createdByName: 'John Employee',
-    createdAt: new Date('2024-01-15T09:00:00'),
-    updatedAt: new Date('2024-01-15T09:00:00'),
-    attachments: [],
-    statusHistory: [],
-  },
-  {
-    id: '2',
-    title: 'Request for new software license',
-    description: 'Need Adobe Creative Suite license for the design team project starting next month.',
-    status: 'under_review',
-    priority: 'medium',
-    category: 'general',
-    createdBy: '2',
-    createdByName: 'Sarah Designer',
-    createdAt: new Date('2024-01-14T14:30:00'),
-    updatedAt: new Date('2024-01-15T10:00:00'),
-    attachments: [],
-    statusHistory: [
-      {
-        id: '1',
-        from: 'new',
-        to: 'under_review',
-        changedBy: 'Admin User',
-        changedAt: new Date('2024-01-15T10:00:00'),
-        note: 'Checking with procurement',
-      },
-    ],
-  },
-  {
-    id: '3',
-    title: 'Billing discrepancy on invoice #4521',
-    description: 'The invoice shows charges for services we did not request. Please review and correct.',
-    status: 'resolved',
-    priority: 'medium',
-    category: 'billing',
-    createdBy: '2',
-    createdByName: 'Mike Finance',
-    createdAt: new Date('2024-01-10T11:00:00'),
-    updatedAt: new Date('2024-01-14T16:00:00'),
-    attachments: [],
-    statusHistory: [
-      {
-        id: '1',
-        from: 'new',
-        to: 'under_review',
-        changedBy: 'Admin User',
-        changedAt: new Date('2024-01-11T09:00:00'),
-      },
-      {
-        id: '2',
-        from: 'under_review',
-        to: 'resolved',
-        changedBy: 'Admin User',
-        changedAt: new Date('2024-01-14T16:00:00'),
-        note: 'Invoice corrected and refund issued',
-      },
-    ],
-  },
-  {
-    id: '4',
-    title: 'Feature request: Dark mode for internal dashboard',
-    description: 'Would be great to have a dark mode option for the internal dashboard to reduce eye strain during night shifts.',
-    status: 'new',
-    priority: 'low',
-    category: 'feature_request',
-    createdBy: '2',
-    createdByName: 'Alex Developer',
-    createdAt: new Date('2024-01-16T08:00:00'),
-    updatedAt: new Date('2024-01-16T08:00:00'),
-    attachments: [],
-    statusHistory: [],
-  },
-  {
-    id: '5',
-    title: 'VPN connection drops frequently',
-    description: 'VPN disconnects every 15-20 minutes requiring manual reconnection. Very disruptive to work.',
-    status: 'under_review',
-    priority: 'critical',
-    category: 'technical',
-    createdBy: '2',
-    createdByName: 'Remote Worker',
-    createdAt: new Date('2024-01-15T16:00:00'),
-    updatedAt: new Date('2024-01-16T09:00:00'),
-    attachments: [],
-    statusHistory: [
-      {
-        id: '1',
-        from: 'new',
-        to: 'under_review',
-        changedBy: 'Admin User',
-        changedAt: new Date('2024-01-16T09:00:00'),
-        note: 'Escalated to network team',
-      },
-    ],
-  },
-];
-
 export function TicketProvider({ children }: { children: ReactNode }) {
-  const [tickets, setTickets] = useState<Ticket[]>(initialTickets);
+  const { user, isAdmin } = useAuth();
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [stats, setStats] = useState<TicketStats>({ total: 0, new: 0, underReview: 0, resolved: 0, closed: 0 });
   const [isLoading, setIsLoading] = useState(false);
+  const [totalTickets, setTotalTickets] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
-  const createTicket = useCallback(async (ticketData: Omit<Ticket, 'id' | 'createdAt' | 'updatedAt' | 'statusHistory'>) => {
+  // Fetch tickets with role-based filtering
+  const fetchTickets = useCallback(async (filters: TicketFilters = {}) => {
+    if (!user) return;
+    
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 800));
+    try {
+      const response = await ticketService.getTickets(
+        filters,
+        user.role,
+        user.id
+      );
+      setTickets(response.data);
+      setTotalTickets(response.total);
+      setCurrentPage(response.page);
+      setTotalPages(response.totalPages);
+    } catch (error) {
+      console.error('Failed to fetch tickets:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user]);
 
-    const newTicket: Ticket = {
-      ...ticketData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      statusHistory: [],
-    };
-
-    setTickets(prev => [newTicket, ...prev]);
-    setIsLoading(false);
-    return newTicket;
+  // Refresh stats
+  const refreshStats = useCallback(async () => {
+    try {
+      const newStats = await ticketService.getStats();
+      setStats(newStats);
+    } catch (error) {
+      console.error('Failed to fetch stats:', error);
+    }
   }, []);
 
-  const updateTicketStatus = useCallback(async (ticketId: string, status: TicketStatus, note?: string, changedBy: string = 'Admin User') => {
+  // Initial fetch when user changes
+  useEffect(() => {
+    if (user) {
+      fetchTickets();
+      refreshStats();
+    }
+  }, [user, fetchTickets, refreshStats]);
+
+  const createTicket = useCallback(async (data: CreateTicketData) => {
+    if (!user) throw new Error('User not authenticated');
+    
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 500));
+    try {
+      const newTicket = await ticketService.createTicket(data, user.id, user.name);
+      setTickets(prev => [newTicket, ...prev]);
+      await refreshStats();
+      return newTicket;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user, refreshStats]);
 
-    setTickets(prev => prev.map(ticket => {
-      if (ticket.id === ticketId) {
-        const statusChange: StatusChange = {
-          id: Date.now().toString(),
-          from: ticket.status,
-          to: status,
-          changedBy,
-          changedAt: new Date(),
-          note,
-        };
+  const updateTicketStatus = useCallback(async (ticketId: string, status: TicketStatus, note?: string) => {
+    if (!user || !isAdmin) throw new Error('Unauthorized');
+    
+    setIsLoading(true);
+    try {
+      const updatedTicket = await ticketService.updateTicketStatus(
+        ticketId,
+        { status, note },
+        user.name
+      );
+      
+      setTickets(prev => prev.map(t => 
+        t.id === ticketId ? updatedTicket : t
+      ));
+      await refreshStats();
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user, isAdmin, refreshStats]);
 
-        return {
-          ...ticket,
-          status,
-          updatedAt: new Date(),
-          statusHistory: [...ticket.statusHistory, statusChange],
-        };
-      }
-      return ticket;
-    }));
-
-    setIsLoading(false);
-  }, []);
-
-  const getTicketById = useCallback((id: string) => {
-    return tickets.find(t => t.id === id);
+  const getTicketById = useCallback(async (id: string): Promise<Ticket | null> => {
+    // First check local state
+    const cached = tickets.find(t => t.id === id);
+    if (cached) return cached;
+    
+    // Fetch from API
+    return await ticketService.getTicketById(id);
   }, [tickets]);
 
   return (
     <TicketContext.Provider value={{
       tickets,
+      stats,
       isLoading,
+      totalTickets,
+      currentPage,
+      totalPages,
+      fetchTickets,
       createTicket,
       updateTicketStatus,
       getTicketById,
+      refreshStats,
     }}>
       {children}
     </TicketContext.Provider>

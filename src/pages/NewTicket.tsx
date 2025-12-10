@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
-import { useAuth } from '@/contexts/AuthContext';
 import { useTickets, TicketPriority, TicketCategory } from '@/contexts/TicketContext';
 import { FloatingInput, FloatingTextarea } from '@/components/ui/floating-input';
 import { FileDropzone } from '@/components/tickets/FileDropzone';
@@ -20,7 +19,6 @@ import { cn } from '@/lib/utils';
 
 export default function NewTicket() {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const { createTicket, isLoading } = useTickets();
   const { toast } = useToast();
 
@@ -62,16 +60,7 @@ export default function NewTicket() {
         description: description.trim(),
         category,
         priority,
-        status: 'new',
-        createdBy: user?.id || '',
-        createdByName: user?.name || 'Unknown',
-        attachments: files.map((file, index) => ({
-          id: `${Date.now()}-${index}`,
-          name: file.name,
-          size: file.size,
-          type: file.type,
-          url: URL.createObjectURL(file),
-        })),
+        attachments: files,
       });
 
       setIsSuccess(true);
