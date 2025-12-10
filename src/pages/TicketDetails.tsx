@@ -2,12 +2,13 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useAuth } from '@/contexts/AuthContext';
-import { useTickets, TicketStatus } from '@/contexts/TicketContext';
+import { useTickets, TicketStatus, Ticket } from '@/contexts/TicketContext';
 import { StatusBadge, PriorityBadge } from '@/components/ui/status-badge';
 import { SkeletonCard } from '@/components/ui/skeleton-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -24,7 +25,8 @@ import {
   Clock,
   CheckCircle,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Shield
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
@@ -33,37 +35,52 @@ import { cn } from '@/lib/utils';
 export default function TicketDetails() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const { getTicketById, updateTicketStatus } = useTickets();
   const { toast } = useToast();
   
+  const [ticket, setTicket] = useState<Ticket | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [newStatus, setNewStatus] = useState<TicketStatus | ''>('');
   const [statusNote, setStatusNote] = useState('');
   const [updateSuccess, setUpdateSuccess] = useState(false);
 
-  const ticket = id ? getTicketById(id) : undefined;
-
   useEffect(() => {
-    const timer = setTimeout(() => setIsLoading(false), 500);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (ticket) {
-      setNewStatus(ticket.status);
-    }
-  }, [ticket]);
+    const loadTicket = async () => {
+      if (!id) return;
+      setIsLoading(true);
+      try {
+        const fetchedTicket = await getTicketById(id);
+        setTicket(fetchedTicket);
+        if (fetchedTicket) {
+          setNewStatus(fetchedTicket.status);
+        }
+      } catch (error) {
+        console.error('Failed to load ticket:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadTicket();
+  }, [id, getTicketById]);
 
   const handleStatusUpdate = async () => {
-    if (!ticket || !newStatus || newStatus === ticket.status) return;
+    if (!ticket || !newStatus || newStatus === ticket.status || !isAdmin) return;
     
     setIsUpdating(true);
     try {
-      await updateTicketStatus(ticket.id, newStatus, statusNote || undefined, user?.name);
+      await updateTicketStatus(ticket.id, newStatus, statusNote || undefined);
       setUpdateSuccess(true);
       setStatusNote('');
+      
+      // Refresh ticket data
+      const updatedTicket = await getTicketById(ticket.id);
+      if (updatedTicket) {
+        setTicket(updatedTicket);
+        setNewStatus(updatedTicket.status);
+      }
+      
       toast({
         title: 'Status Updated',
         description: `Ticket status changed to ${newStatus.replace('_', ' ')}`,
@@ -72,7 +89,7 @@ export default function TicketDetails() {
     } catch (error) {
       toast({
         title: 'Update Failed',
-        description: 'Could not update ticket status',
+        description: 'Could not update ticket status. You may not have permission.',
         variant: 'destructive',
       });
     } finally {
@@ -102,7 +119,7 @@ export default function TicketDetails() {
         <div className="page-enter text-center py-12">
           <AlertCircle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
           <h2 className="text-xl font-semibold mb-2">Ticket Not Found</h2>
-          <p className="text-muted-foreground mb-4">The ticket you're looking for doesn't exist.</p>
+          <p className="text-muted-foreground mb-4">The ticket you're looking for doesn't exist or you don't have access.</p>
           <Button asChild>
             <Link to="/tickets">Back to Tickets</Link>
           </Button>
@@ -258,12 +275,14 @@ export default function TicketDetails() {
 
           {/* Right Column - Admin Panel */}
           <div className="space-y-6">
-            {user?.role === 'admin' && (
+            {/* Admin Control Panel - Only visible to admins */}
+            {isAdmin && (
               <Card className="border-primary/20 bg-primary/5">
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                    <Shield className="w-4 h-4 text-primary" />
                     Admin Control
+                    <Badge variant="secondary" className="text-[10px]">Admin Only</Badge>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -312,6 +331,16 @@ export default function TicketDetails() {
                       'Update Status'
                     )}
                   </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Non-admin notice */}
+            {!isAdmin && (
+              <Card className="border-muted">
+                <CardContent className="p-4 text-center text-sm text-muted-foreground">
+                  <Shield className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  Status updates are managed by administrators.
                 </CardContent>
               </Card>
             )}

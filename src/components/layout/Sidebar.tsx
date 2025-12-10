@@ -2,20 +2,22 @@ import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { 
   LayoutDashboard, 
   Ticket, 
   PlusCircle, 
-  Settings, 
   LogOut,
   ChevronLeft,
   ChevronRight,
-  User,
   Shield,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Badge } from '@/components/ui/badge';
 
 interface NavItemProps {
   to: string;
@@ -67,7 +69,8 @@ function NavItem({ to, icon: Icon, label, collapsed }: NavItemProps) {
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
+  const { theme, toggleTheme } = useTheme();
 
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -112,8 +115,38 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* User section */}
-      <div className="p-3 border-t border-sidebar-border space-y-2">
+      {/* Theme Toggle & User section */}
+      <div className="p-3 border-t border-sidebar-border space-y-3">
+        {/* Theme Toggle */}
+        {collapsed ? (
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={toggleTheme}
+                className="w-full justify-center"
+              >
+                {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleTheme}
+            className="w-full justify-start gap-2"
+          >
+            {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+            {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+          </Button>
+        )}
+
+        {/* User Info */}
         <div className={cn(
           'flex items-center gap-3 p-2 rounded-lg bg-muted/50',
           collapsed && 'justify-center'
@@ -125,12 +158,20 @@ export function Sidebar() {
           </Avatar>
           {!collapsed && (
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{user?.name}</p>
-              <p className="text-xs text-muted-foreground capitalize">{user?.role}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium truncate">{user?.name}</p>
+                {isAdmin && (
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                    Admin
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
             </div>
           )}
         </div>
 
+        {/* Logout */}
         <div className="space-y-1">
           {collapsed ? (
             <Tooltip delayDuration={0}>
